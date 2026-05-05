@@ -890,6 +890,20 @@ rd_kafka_parse_Metadata0(rd_kafka_broker_t *rkb,
                            "No brokers or topics in metadata: should retry");
                 err = RD_KAFKA_RESP_ERR__PARTIAL;
                 goto err;
+        } else if (md->broker_cnt == 0) {
+                /* A response with topics but no brokers is emitted by a
+                 * freshly-restarted broker that has not yet synced cluster
+                 * state with the controller. Trusting it would cause
+                 * rd_kafka_metadata_decommission_unavailable_brokers() to
+                 * decommission every learned broker handle, leaving the
+                 * client permanently stuck with no usable broker. Treat as
+                 * transient and require re-bootstrap.
+                 * Backport of upstream PR confluentinc/librdkafka#5303
+                 * (issue #5301). */
+                rd_rkb_dbg(rkb, METADATA, "METADATA",
+                           "No brokers in metadata: should re-bootstrap");
+                err = RD_KAFKA_RESP_ERR_REBOOTSTRAP_REQUIRED;
+                goto err;
         }
 
         /* Update our list of brokers. */
