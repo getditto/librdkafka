@@ -237,15 +237,17 @@ rd_kafka_mock_validate_records(rd_kafka_mock_partition_t *mpart,
 
         *is_dupd = rd_false;
 
-        if (!TransactionalId || RD_KAFKAP_STR_LEN(TransactionalId) < 1)
-                return RD_KAFKA_RESP_ERR_NO_ERROR;
-
         rd_kafka_buf_peek_i64(rkbuf, RD_KAFKAP_MSGSET_V2_OF_ProducerId,
                               &pid.id);
         rd_kafka_buf_peek_i16(rkbuf, RD_KAFKAP_MSGSET_V2_OF_ProducerEpoch,
                               &pid.epoch);
         rd_kafka_buf_peek_i32(rkbuf, RD_KAFKAP_MSGSET_V2_OF_BaseSequence,
                               &BaseSequence);
+
+        if (pid.id < 0)
+                return RD_KAFKA_RESP_ERR_NO_ERROR;
+        if (TransactionalId && RD_KAFKAP_STR_IS_NULL(TransactionalId))
+                TransactionalId = NULL;
 
         mtx_lock(&mcluster->lock);
         err = rd_kafka_mock_pid_find(mcluster, TransactionalId, pid, &mpid);
