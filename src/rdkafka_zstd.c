@@ -42,12 +42,14 @@ rd_kafka_resp_err_t rd_kafka_zstd_decompress(rd_kafka_broker_t *rkb,
                                              size_t inlen,
                                              void **outbuf,
                                              size_t *outlenp) {
+        const unsigned long long max_out_bufsize =
+            (unsigned long long)rkb->rkb_rk->rk_conf.recv_max_msg_size;
         unsigned long long out_bufsize = ZSTD_getFrameContentSize(inbuf, inlen);
 
         switch (out_bufsize) {
         case ZSTD_CONTENTSIZE_UNKNOWN:
                 /* Decompressed size cannot be determined, make a guess */
-                out_bufsize = inlen * 2;
+                out_bufsize = RD_MIN(2ULL * inlen, max_out_bufsize);
                 break;
         case ZSTD_CONTENTSIZE_ERROR:
                 /* Error calculating frame content size */
@@ -61,9 +63,8 @@ rd_kafka_resp_err_t rd_kafka_zstd_decompress(rd_kafka_broker_t *rkb,
         }
 
         /* Increase output buffer until it can fit the entire result,
-         * capped by message.max.bytes */
-        while (out_bufsize <=
-               (unsigned long long)rkb->rkb_rk->rk_conf.recv_max_msg_size) {
+         * capped by receive.message.max.bytes */
+        while (out_bufsize <= max_out_bufsize) {
                 size_t ret;
                 char *decompressed;
 
@@ -90,9 +91,13 @@ rd_kafka_resp_err_t rd_kafka_zstd_decompress(rd_kafka_broker_t *rkb,
 
                 /* Check if the destination size is too small */
                 if (ZSTD_getErrorCode(ret) == ZSTD_error_dstSize_tooSmall) {
+                        if (out_bufsize == max_out_bufsize)
+                                break;
 
-                        /* Grow quadratically */
-                        out_bufsize += RD_MAX(out_bufsize * 2, 4000);
+                        /* Try the receive limit if the next size crosses it. */
+                        out_bufsize = RD_MIN(
+                            out_bufsize + RD_MAX(out_bufsize * 2, 4000),
+                            max_out_bufsize);
 
                         rd_atomic64_add(&rkb->rkb_c.zbuf_grow, 1);
 
@@ -110,8 +115,8 @@ rd_kafka_resp_err_t rd_kafka_zstd_decompress(rd_kafka_broker_t *rkb,
                    "Unable to decompress ZSTD "
                    "(input buffer %" PRIusz
                    ", output buffer %llu): "
-                   "output would exceed message.max.bytes (%d)",
-                   inlen, out_bufsize, rkb->rkb_rk->rk_conf.max_msg_size);
+                   "output would exceed receive.message.max.bytes (%llu)",
+                   inlen, out_bufsize, max_out_bufsize);
 
         return RD_KAFKA_RESP_ERR__BAD_COMPRESSION;
 }
